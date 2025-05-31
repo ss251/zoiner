@@ -20,6 +20,13 @@ export const WALLET_PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY;
 export const RPC_URL = process.env.RPC_URL || 'https://mainnet.base.org';
 export const DRY_RUN = process.env.DRY_RUN === 'true';
 
+// AI Agent Constants
+export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+export const SUPABASE_URL = process.env.SUPABASE_URL;
+export const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+export const AI_MODEL = process.env.AI_MODEL || 'claude-3-5-sonnet-20241022';
+export const AI_MAX_TOKENS = parseInt(process.env.AI_MAX_TOKENS || '1000');
+
 // Pinata/IPFS Constants
 export const PINATA_JWT = process.env.PINATA_JWT;
 export const GATEWAY_URL = process.env.GATEWAY_URL || 'tan-obvious-puffin-912.mypinata.cloud';

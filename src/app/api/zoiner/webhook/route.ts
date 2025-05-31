@@ -6,7 +6,7 @@ import { PublicClient, WalletClient } from 'viem';
 
 import { createNeynarBotService } from '~/lib/neynar-bot';
 import { createZoraService } from '~/lib/zora';
-import { BotService } from '~/lib/bot-service';
+import { AIBotService } from '~/lib/ai-bot-service';
 import { ZoinerWebhookEvent } from '~/lib/types/zoiner';
 
 // Webhook verification for GET requests
@@ -18,12 +18,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ challenge });
   }
   
-  return NextResponse.json({ status: 'Zoiner webhook endpoint active' });
+  return NextResponse.json({ 
+    status: 'Zoiner AI Agent webhook endpoint active',
+    version: '2.0.0-ai',
+    capabilities: ['claude-vision', 'context-aware', 'creative-catalyst', 'auto-cleanup']
+  });
 }
 
 // Main webhook handler for POST requests
 export async function POST(request: NextRequest) {
-  console.log('🔔 Received Zoiner webhook event');
+  console.log('🎨 Received Zoiner AI Agent webhook event');
   
   try {
     // Parse the webhook event
@@ -39,23 +43,27 @@ export async function POST(request: NextRequest) {
     const castHash = event.data.hash;
     console.log(`📝 Processing cast.created event for cast ${castHash}`);
     
-    // Initialize services
-    const botService = await initializeBotService();
-    if (!botService) {
-      console.error('❌ Failed to initialize bot service');
+    // Initialize AI-powered bot service
+    const aiBotService = await initializeAIBotService();
+    if (!aiBotService) {
+      console.error('❌ Failed to initialize AI bot service');
       return NextResponse.json({ 
         status: 'error', 
-        message: 'Bot service initialization failed' 
+        message: 'AI bot service initialization failed' 
       }, { status: 500 });
     }
     
     // Process the cast asynchronously to not block the webhook response
-    botService.processCast(castHash).catch(err => {
+    aiBotService.processCast(castHash).catch(err => {
       console.error(`❌ Error processing cast ${castHash}:`, err);
     });
     
     // Always return 200 OK for webhook events
-    return NextResponse.json({ status: 'ok' });
+    return NextResponse.json({ 
+      status: 'ok',
+      message: 'AI agent processing initiated',
+      cast_hash: castHash
+    });
     
   } catch (error) {
     console.error('❌ Error handling webhook event:', error);
@@ -67,19 +75,36 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Initialize the bot service with all required dependencies
- * @returns BotService instance or null if initialization fails
+ * Initialize the AI-powered bot service with all required dependencies
+ * @returns AIBotService instance or null if initialization fails
  */
-async function initializeBotService(): Promise<BotService | null> {
+async function initializeAIBotService(): Promise<AIBotService | null> {
   try {
-    // Check required environment variables
-    const walletPrivateKey = process.env.WALLET_PRIVATE_KEY;
-    if (!walletPrivateKey) {
-      console.error('❌ WALLET_PRIVATE_KEY is required');
+    console.log('🤖 Initializing AI bot service...');
+    
+    // Check required environment variables for AI functionality
+    const requiredEnvVars = [
+      'WALLET_PRIVATE_KEY',
+      'NEYNAR_API_KEY', 
+      'SIGNER_UUID',
+      'BOT_FID',
+      'SUPABASE_URL',
+      'SUPABASE_ANON_KEY'
+    ];
+    
+    const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+    if (missingVars.length > 0) {
+      console.error('❌ Missing required environment variables:', missingVars);
       return null;
     }
     
+    // Check for Claude/Anthropic API key
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.warn('⚠️ ANTHROPIC_API_KEY not set - falling back to pattern matching mode');
+    }
+    
     // Create the wallet account
+    const walletPrivateKey = process.env.WALLET_PRIVATE_KEY;
     const account = privateKeyToAccount(walletPrivateKey as `0x${string}`);
     
     // Create viem clients for Zora service
@@ -104,11 +129,16 @@ async function initializeBotService(): Promise<BotService | null> {
     // Create Zora service
     const zoraService = createZoraService(walletClient, publicClient);
     
-    // Create and return bot service
-    return new BotService(neynarService, zoraService);
+    // Create and return AI bot service
+    const aiBotService = new AIBotService(neynarService, zoraService);
+    
+    console.log('✅ AI bot service initialized successfully');
+    console.log('🎨 Zoiner AI Agent ready - creative catalyst mode activated!');
+    
+    return aiBotService;
     
   } catch (error) {
-    console.error('❌ Error initializing bot service:', error);
+    console.error('❌ Error initializing AI bot service:', error);
     return null;
   }
 } 
