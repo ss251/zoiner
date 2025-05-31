@@ -2,7 +2,7 @@
 // Streamlined types for simplified agent without user profiles
 
 export interface AgentDecision {
-  action: 'create_token' | 'encourage' | 'help' | 'clarify' | 'celebrate';
+  action: 'create_token' | 'create_cast_token' | 'encourage' | 'help' | 'clarify' | 'celebrate';
   message: string;
   suggested_name?: string;
   suggested_symbol?: string;

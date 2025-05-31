@@ -217,14 +217,14 @@ export class NeynarBotService {
     
     return {
       hash: String(cast.hash || ''),
-      thread_hash: cast.threadHash ? String(cast.threadHash) : undefined,
-      parent_hash: cast.parentHash ? String(cast.parentHash) : undefined,
+      thread_hash: cast.thread_hash ? String(cast.thread_hash) : undefined,
+      parent_hash: cast.parent_hash ? String(cast.parent_hash) : undefined,
       author: {
         fid: Number((cast.author as Record<string, unknown>)?.fid || 0),
         username: String((cast.author as Record<string, unknown>)?.username || ''),
-        display_name: String((cast.author as Record<string, unknown>)?.displayName || ''),
-        pfp_url: (cast.author as Record<string, unknown>)?.pfp ? 
-          String(((cast.author as Record<string, unknown>).pfp as Record<string, unknown>)?.url) : undefined,
+        display_name: String((cast.author as Record<string, unknown>)?.display_name || ''),
+        pfp_url: (cast.author as Record<string, unknown>)?.pfp_url ? 
+          String((cast.author as Record<string, unknown>)?.pfp_url) : undefined,
         profile: (cast.author as Record<string, unknown>)?.profile,
         verifications: (cast.author as Record<string, unknown>)?.verifications as { ethereum?: string; solana?: string } || {}
       },
@@ -241,14 +241,14 @@ export class NeynarBotService {
         };
       }) : undefined,
       mentions: Array.isArray(cast.mentions) ? (cast.mentions as number[]) : undefined,
-      mentions_positions: Array.isArray(cast.mentionsPositions) ? (cast.mentionsPositions as number[]) : undefined,
-      parent_url: cast.parentUrl ? String(cast.parentUrl) : undefined,
-      embedded_media: Array.isArray(cast.embedsMedia) ? (cast.embedsMedia as unknown[]).map((media: unknown) => {
+      mentions_positions: Array.isArray(cast.mentions_positions) ? (cast.mentions_positions as number[]) : undefined,
+      parent_url: cast.parent_url ? String(cast.parent_url) : undefined,
+      embedded_media: Array.isArray(cast.embedded_media) ? (cast.embedded_media as unknown[]).map((media: unknown) => {
         const m = media as Record<string, unknown>;
         return {
           url: m.url ? String(m.url) : undefined,
           type: m.type ? String(m.type) : undefined,
-          alt_text: m.altText ? String(m.altText) : undefined
+          alt_text: m.alt_text ? String(m.alt_text) : undefined
         };
       }) : undefined
     };
