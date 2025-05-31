@@ -259,7 +259,7 @@ export class BotService {
       
       // Generate the Zora URL
       console.group('🔗 Step 7: Generating Zora URL and sending success message');
-      const zoraUrl = this.zoraService.generateZoraUrl(result.address, coinRequest.creatorAddress);
+      const zoraUrl = this.zoraService.generateZoraUrl(result.address, ZOINER_PLATFORM_ADDRESS);
       console.log(`✅ Generated Zora URL: ${zoraUrl}`);
       
       // Create success message - put URL on its own line for better embedding

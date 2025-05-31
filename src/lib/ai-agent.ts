@@ -351,7 +351,7 @@ export class ZoinerAgentService {
         initialPurchaseWei: 0n
       });
 
-      const zoraUrl = this.zoraService.generateZoraUrl(result.address, creatorAddress);
+      const zoraUrl = this.zoraService.generateZoraUrl(result.address, ZOINER_PLATFORM_ADDRESS);
       
       await this.neynarService.replyToCast(
         cast.author.fid,
@@ -432,7 +432,7 @@ export class ZoinerAgentService {
         initialPurchaseWei: 0n
       });
 
-      const zoraUrl = this.zoraService.generateZoraUrl(result.address, creatorAddress);
+      const zoraUrl = this.zoraService.generateZoraUrl(result.address, ZOINER_PLATFORM_ADDRESS);
       
       await this.neynarService.replyToCast(
         cast.author.fid,
