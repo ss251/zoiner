@@ -35,3 +35,6 @@ export const GATEWAY_URL = process.env.GATEWAY_URL || 'tan-obvious-puffin-912.my
 export const API_ENDPOINT = process.env.API_ENDPOINT || APP_URL;
 export const ZOINER_WEBHOOK_URL = `${APP_URL}/api/zoiner/webhook`;
 export const ZOINER_METADATA_URL = `${APP_URL}/api/zoiner/metadata`;
+
+// Zoiner Platform Address for earning platform referrer fees
+export const ZOINER_PLATFORM_ADDRESS = process.env.ZOINER_PLATFORM_ADDRESS;

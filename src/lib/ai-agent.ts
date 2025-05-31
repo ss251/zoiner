@@ -12,6 +12,7 @@ import { ZoraService } from './zora';
 import { extractImageFromCast } from './image-utils';
 import { isRequestToCoinCast } from './cast-utils';
 import { OGImageService } from './og-image-service';
+import { ZOINER_PLATFORM_ADDRESS } from './constants';
 
 // Simplified user context without profiles
 interface UserContext {
@@ -346,6 +347,7 @@ export class ZoinerAgentService {
         symbol: decision.suggested_symbol!,
         uri: metadataUri,
         payoutRecipient: creatorAddress as `0x${string}`,
+        platformReferrer: ZOINER_PLATFORM_ADDRESS as `0x${string}`,
         initialPurchaseWei: 0n
       });
 
@@ -426,6 +428,7 @@ export class ZoinerAgentService {
         symbol: tokenSymbol,
         uri: metadataUri,
         payoutRecipient: creatorAddress as `0x${string}`,
+        platformReferrer: ZOINER_PLATFORM_ADDRESS as `0x${string}`,
         initialPurchaseWei: 0n
       });
 

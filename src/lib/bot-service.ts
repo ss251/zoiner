@@ -4,6 +4,7 @@ import { ZoraService } from './zora';
 import { FarcasterCast } from './types/zoiner';
 import { extractImageFromCast } from './image-utils';
 import { parseCoinCreationRequest } from './parser-utils';
+import { ZOINER_PLATFORM_ADDRESS } from './constants';
 
 // Check if we're in dry run mode
 const DRY_RUN = process.env.DRY_RUN === 'true';
@@ -230,6 +231,7 @@ export class BotService {
         symbol: coinRequest.symbol,
         uri: metadataUri,
         payoutRecipient: coinRequest.creatorAddress,
+        platformReferrer: ZOINER_PLATFORM_ADDRESS as `0x${string}`,
         initialPurchaseWei: 0n
       };
       
