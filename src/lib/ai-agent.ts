@@ -482,23 +482,45 @@ export class ZoinerAgentService {
 
   // Helper methods (same as before)
   private async callClaude(messages: ClaudeMessage[], systemPrompt: string): Promise<string> {
-    const response = await axios.post<ClaudeResponse>(
-      'https://api.anthropic.com/v1/messages',
-      {
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY!,
-          'anthropic-version': '2023-06-01'
+    console.log('🤖 Making Claude API call...');
+    
+    try {
+      const response = await axios.post<ClaudeResponse>(
+        'https://api.anthropic.com/v1/messages',
+        {
+          model: 'claude-3-5-sonnet-20241022',
+          max_tokens: 1000,
+          system: systemPrompt,
+          messages
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': process.env.ANTHROPIC_API_KEY!,
+            'anthropic-version': '2023-06-01'
+          },
+          timeout: 30000, // 30 second timeout
+          signal: AbortSignal.timeout(30000) // Additional timeout signal
+        }
+      );
+      
+      console.log('✅ Claude API call successful');
+      return response.data.content[0].text;
+    } catch (error) {
+      console.error('❌ Claude API call failed:', error);
+      
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+          console.error('❌ Request timed out after 30 seconds');
+        } else if (error.response) {
+          console.error('❌ API error response:', error.response.status, error.response.data);
+        } else if (error.request) {
+          console.error('❌ No response received from API');
         }
       }
-    );
-    return response.data.content[0].text;
+      
+      throw error;
+    }
   }
 
   private async downloadImageAsBase64(imageUrl: string): Promise<string> {
@@ -543,6 +565,8 @@ export class ZoinerAgentService {
     symbol: string;
     description: string;
   }> {
+    console.log('🔍 Starting analyzeCastForTokenCreation...');
+    
     try {
       // Clean up problematic Unicode characters that might break API calls
       const cleanText = targetCast.text
@@ -552,6 +576,7 @@ export class ZoinerAgentService {
 
       console.log('🧹 Cleaned cast text:', cleanText);
 
+      console.log('📝 Building prompt...');
       const prompt = `analyze this cast and create a token name:
 
 "${cleanText}" by ${targetCast.author.display_name || targetCast.author.username}
@@ -570,6 +595,9 @@ examples:
 - "building something cool" → {"name": "Building Cool", "symbol": "BUILD", "description": "the hustle of creating something new"}
 - "coffee time" → {"name": "Coffee Time", "symbol": "BREW", "description": "fuel for the grind"}`;
 
+      console.log('✅ Prompt built successfully');
+      console.log('🤖 About to call Claude API...');
+
       const response = await this.callClaude([{
         role: 'user',
         content: [{ type: 'text', text: prompt }]
@@ -577,7 +605,9 @@ examples:
 
       console.log('🔍 Claude response for cast analysis:', response);
 
+      console.log('📊 Parsing Claude response...');
       const parsed = JSON.parse(response);
+      console.log('✅ Successfully parsed Claude response:', parsed);
       
       return {
         name: parsed.name || `${targetCast.author.display_name || targetCast.author.username} Cast`,
@@ -589,11 +619,13 @@ examples:
       console.error('❌ Error analyzing cast content:', error);
       console.error('❌ Error details:', {
         message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : 'No stack trace',
         castText: targetCast.text,
         author: targetCast.author.display_name || targetCast.author.username
       });
       
       // Fallback to basic naming
+      console.log('🔄 Using fallback token naming...');
       return {
         name: `${targetCast.author.display_name || targetCast.author.username} Cast`,
         symbol: 'CAST',
