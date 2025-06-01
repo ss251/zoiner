@@ -53,17 +53,28 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
     
-    // Process the cast asynchronously to not block the webhook response
-    aiBotService.processCast(castHash).catch(err => {
-      console.error(`❌ Error processing cast ${castHash}:`, err);
-    });
-    
-    // Always return 200 OK for webhook events
-    return NextResponse.json({ 
-      status: 'ok',
-      message: 'AI agent processing initiated',
-      cast_hash: castHash
-    });
+    // CRITICAL FIX: Await the async processing instead of fire-and-forget
+    // This ensures the processing completes before the serverless function terminates
+    try {
+      await aiBotService.processCast(castHash);
+      console.log('✅ AI agent processing completed successfully');
+      
+      return NextResponse.json({ 
+        status: 'ok',
+        message: 'AI agent processing completed',
+        cast_hash: castHash
+      });
+    } catch (processingError) {
+      console.error(`❌ Error processing cast ${castHash}:`, processingError);
+      
+      // Still return 200 OK to webhook, but log the error
+      return NextResponse.json({ 
+        status: 'error',
+        message: 'AI agent processing failed',
+        cast_hash: castHash,
+        error: processingError instanceof Error ? processingError.message : 'Unknown error'
+      });
+    }
     
   } catch (error) {
     console.error('❌ Error handling webhook event:', error);
