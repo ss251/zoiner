@@ -285,34 +285,37 @@ export class ZoinerAgentService {
     const explicitName = this.extractExplicitName(cast.text);
     const explicitSymbol = this.extractExplicitSymbol(cast.text);
     
-    // If user provided explicit instructions with an image, use them
-    if (explicitName && imageAnalysis) {
-      return {
-        action: 'create_token',
-        message: `creating your "${explicitName}" token now! 🎨→🪙`,
-        suggested_name: explicitName,
-        suggested_symbol: explicitSymbol || this.generateSymbolFromName(explicitName),
-        metadata_description: imageAnalysis?.visual_description || `${explicitName} - Created with @zoiner on Farcaster`
-      };
-    }
-    
+    // Always build context and ask Claude for creative response
     const contextText = this.buildContextText(cast, imageAnalysis, userContext);
-    const response = await this.callClaude([{
-      role: 'user',
-      content: [{ type: 'text', text: contextText }]
-    }], ZOINER_PERSONALITY_PROMPT);
-
+    
     try {
-      return JSON.parse(response) as AgentDecision;
+      const response = await this.callClaude([{
+        role: 'user',
+        content: [{ type: 'text', text: contextText }]
+      }], ZOINER_PERSONALITY_PROMPT);
+
+      const decision = JSON.parse(response) as AgentDecision;
+      
+      // If user provided explicit names, override Claude's suggestions but keep the creative message
+      if (explicitName && decision.action === 'create_token') {
+        decision.suggested_name = explicitName;
+        decision.suggested_symbol = explicitSymbol || this.generateSymbolFromName(explicitName);
+        console.log(`📝 Using explicit name "${explicitName}" with Claude's creative message: "${decision.message}"`);
+      }
+      
+      return decision;
     } catch {
-      // Fallback decision for regular image token creation
+      // Fallback decision
       const text = cast.text.toLowerCase();
       const hasImage = imageAnalysis !== null;
 
       if (hasImage && (text.includes('coin') || text.includes('token'))) {
+        // If we have explicit names, use them in the fallback too
         return {
           action: 'create_token',
-          message: 'creating your token now! 🎨→🪙',
+          message: explicitName 
+            ? `beautiful ${imageAnalysis?.artistic_style || 'artwork'}! creating your "${explicitName}" token now 🎨→🪙`
+            : 'creating your token now! 🎨→🪙',
           suggested_name: explicitName || imageAnalysis?.suggested_names[0] || 'Creative Vision',
           suggested_symbol: explicitSymbol || imageAnalysis?.suggested_symbols[0] || 'CREATE',
           metadata_description: imageAnalysis?.visual_description || 'A creative work'
@@ -419,7 +422,7 @@ export class ZoinerAgentService {
       await this.neynarService.replyToCast(
         cast.author.fid,
         cast.hash,
-        "sorry, hit a creative block! 🎨 try again ✨"
+        "sorry, hit a creative block! �� try again ✨"
       );
     }
     
