@@ -28,6 +28,8 @@ interface UserContext {
 
 const ZOINER_PERSONALITY_PROMPT = `You are Zoiner, a creative AI that helps artists turn their images into Zora ERC20 tokens on Farcaster.
 
+IMPORTANT: If the user explicitly provides a name (e.g., "create a coin called nature"), you MUST use that exact name. Only suggest creative names when the user hasn't specified one.
+
 PERSONALITY TRAITS:
 - Creative catalyst who celebrates all forms of art
 - Encouraging and supportive, never judgmental  
@@ -279,109 +281,44 @@ export class ZoinerAgentService {
     imageAnalysis: ImageAnalysis | null, 
     userContext: UserContext
   ): Promise<AgentDecision> {
-    const text = cast.text.toLowerCase();
-    const hasImage = imageAnalysis !== null;
+    // Check for explicit name/symbol instructions first
+    const explicitName = this.extractExplicitName(cast.text);
+    const explicitSymbol = this.extractExplicitSymbol(cast.text);
     
-    console.log('🤖 Making decision for regular token request...');
-    
-    // Check if this is clearly a token creation request
-    const tokenKeywords = ['coin', 'token', 'create', 'mint', 'make'];
-    const hasTokenKeyword = tokenKeywords.some(keyword => text.includes(keyword));
-    
-    if (hasImage && hasTokenKeyword) {
-      console.log('🎯 Token creation request detected - asking Claude for creative response');
-      
-      // Extract custom name if provided
-      let tokenName = imageAnalysis?.suggested_names[0] || 'Creative Vision';
-      let tokenSymbol = imageAnalysis?.suggested_symbols[0] || 'CREATE';
-      
-      // Try to extract custom name from patterns
-      const patterns = [
-        /coin this content:\s*([^,\n\r]+)/i,
-        /create coin:\s*([^,\n\r]+)/i,
-        /create a coin:\s*([^,\n\r]+)/i,
-        /make a coin:\s*([^,\n\r]+)/i,
-        /coin this:\s*([^,\n\r]+)/i,
-        /tokenize this:\s*([^,\n\r]+)/i,
-        /mint this:\s*([^,\n\r]+)/i
-      ];
-      
-      for (const pattern of patterns) {
-        const match = cast.text.match(pattern);
-        if (match && match[1] && match[1].trim()) {
-          const customName = match[1].trim();
-          tokenName = customName;
-          tokenSymbol = customName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 6).toUpperCase() || 'TOKEN';
-          break;
-        }
-      }
-      
-      // Ask Claude to craft a creative response about the artwork using existing personality
-      try {
-        const contextText = `User message: "${cast.text}"
-  Token name will be: "${tokenName}"
-  Token symbol will be: "${tokenSymbol}"
-  
-  Image analysis: ${imageAnalysis?.artistic_style}, ${imageAnalysis?.mood}, colors: ${imageAnalysis?.color_palette.join(', ')}
-  Visual description: ${imageAnalysis?.visual_description}
-  Suggested names: ${imageAnalysis?.suggested_names.join(', ')}
-  
-  This is clearly a token creation request. Respond with your creative personality about their artwork and confirm token creation.`;
-  
-        const response = await this.callClaude([{
-          role: 'user',
-          content: [{ type: 'text', text: contextText }]
-        }], ZOINER_PERSONALITY_PROMPT);
-        
-        try {
-          const decision = JSON.parse(response) as AgentDecision;
-          
-          // Ensure it's a token creation action (override if Claude didn't set it correctly)
-          if (decision.action !== 'create_token') {
-            decision.action = 'create_token';
-            decision.suggested_name = tokenName;
-            decision.suggested_symbol = tokenSymbol;
-          }
-          
-          console.log(`🎨 Claude crafted creative response: "${decision.message}"`);
-          return decision;
-        } catch (parseError) {
-          console.error('❌ Error parsing Claude response:', parseError);
-          console.warn('Claude returned non-JSON, using raw response as message');
-          // Use Claude's raw response as the message, but ensure token creation
-          return {
-            action: 'create_token',
-            message: response.length > 280 ? response.substring(0, 277) + '...' : response,
-            suggested_name: tokenName,
-            suggested_symbol: tokenSymbol,
-            metadata_description: imageAnalysis?.visual_description || `${tokenName} - A creative work`
-          };
-        }
-        
-      } catch (error) {
-        console.error('❌ Claude creative response failed:', error);
-        
-        // Fallback to generic but still create token
-        return {
-          action: 'create_token',
-          message: `beautiful ${imageAnalysis?.artistic_style || 'artwork'}! creating your "${tokenName}" token now 🎨→🪙`,
-          suggested_name: tokenName,
-          suggested_symbol: tokenSymbol,
-          metadata_description: imageAnalysis?.visual_description || `${tokenName} - A creative work`
-        };
-      }
+    // If user provided explicit instructions with an image, use them
+    if (explicitName && imageAnalysis) {
+      return {
+        action: 'create_token',
+        message: `creating your "${explicitName}" token now! 🎨→🪙`,
+        suggested_name: explicitName,
+        suggested_symbol: explicitSymbol || this.generateSymbolFromName(explicitName),
+        metadata_description: imageAnalysis?.visual_description || `${explicitName} - Created with @zoiner on Farcaster`
+      };
     }
     
-    // For unclear intent, use the original Claude decision flow
     const contextText = this.buildContextText(cast, imageAnalysis, userContext);
+    const response = await this.callClaude([{
+      role: 'user',
+      content: [{ type: 'text', text: contextText }]
+    }], ZOINER_PERSONALITY_PROMPT);
+
     try {
-      const response = await this.callClaude([{
-        role: 'user',
-        content: [{ type: 'text', text: contextText }]
-      }], ZOINER_PERSONALITY_PROMPT);
-      
       return JSON.parse(response) as AgentDecision;
     } catch {
+      // Fallback decision for regular image token creation
+      const text = cast.text.toLowerCase();
+      const hasImage = imageAnalysis !== null;
+
+      if (hasImage && (text.includes('coin') || text.includes('token'))) {
+        return {
+          action: 'create_token',
+          message: 'creating your token now! 🎨→🪙',
+          suggested_name: explicitName || imageAnalysis?.suggested_names[0] || 'Creative Vision',
+          suggested_symbol: explicitSymbol || imageAnalysis?.suggested_symbols[0] || 'CREATE',
+          metadata_description: imageAnalysis?.visual_description || 'A creative work'
+        };
+      }
+
       return {
         action: hasImage ? 'encourage' : 'help',
         message: hasImage 
@@ -649,9 +586,23 @@ export class ZoinerAgentService {
   ): string {
     let context = `User message: "${cast.text}"\n`;
     
+    // Check if user provided explicit name
+    const explicitName = this.extractExplicitName(cast.text);
+    if (explicitName) {
+      context += `\nIMPORTANT: User explicitly requested name: "${explicitName}" - you MUST use this exact name\n`;
+    }
+    
+    // Check if user provided explicit symbol
+    const explicitSymbol = this.extractExplicitSymbol(cast.text);
+    if (explicitSymbol) {
+      context += `\nIMPORTANT: User explicitly requested symbol: "${explicitSymbol}" - you MUST use this exact symbol\n`;
+    }
+    
     if (imageAnalysis) {
       context += `\nImage: ${imageAnalysis.artistic_style}, ${imageAnalysis.mood}`;
-      context += `\nSuggested names: ${imageAnalysis.suggested_names.join(', ')}`;
+      if (!explicitName) {
+        context += `\nSuggested names: ${imageAnalysis.suggested_names.join(', ')}`;
+      }
     }
 
     context += `\nUser has created ${userContext.creation_count} tokens`;
@@ -672,6 +623,19 @@ export class ZoinerAgentService {
     description: string;
   }> {
     console.log('🔍 Starting analyzeCastForTokenCreation...');
+    
+    // First check if the original cast that's being tokenized has an explicit name
+    const explicitName = this.extractExplicitName(targetCast.text);
+    const explicitSymbol = this.extractExplicitSymbol(targetCast.text);
+    
+    if (explicitName) {
+      console.log(`✅ Using explicit name from cast: "${explicitName}"`);
+      return {
+        name: explicitName,
+        symbol: explicitSymbol || this.generateSymbolFromName(explicitName),
+        description: `Tokenized cast: "${targetCast.text.slice(0, 100)}${targetCast.text.length > 100 ? '...' : ''}"`
+      };
+    }
     
     try {
       // Clean up problematic Unicode characters that might break API calls
@@ -738,5 +702,71 @@ examples:
         description: `Tokenized cast: "${targetCast.text.slice(0, 100)}${targetCast.text.length > 100 ? '...' : ''}"`
       };
     }
+  }
+
+  /**
+   * Extract explicit name from user text
+   */
+  private extractExplicitName(text: string): string | null {
+    const patterns = [
+      // Original patterns for coin creation
+      /coin this content:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
+      /create coin:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
+      /create a coin:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
+      /make a coin:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
+      /coin this:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
+      /tokenize this:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
+      /mint this:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
+      
+      // Patterns with "called" or "named"
+      /create (?:a )?coin (?:called|named) ["']?([^"',]+?)["']?(?:\s*,|\s+ticker:|\s*$)/i,
+      /coin (?:called|named) ["']?([^"',]+?)["']?(?:\s*,|\s+ticker:|\s*$)/i,
+      /token (?:called|named) ["']?([^"',]+?)["']?/i,
+      
+      // Direct name: pattern
+      /name:\s*["']?([^"',]+?)["']?(?:\s*,|\s+ticker:|\s*$)/i,
+      
+      // Quoted token pattern
+      /"([^"]+)" token/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match?.[1]) {
+        return match[1].trim();
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Extract explicit symbol from user text
+   */
+  private extractExplicitSymbol(text: string): string | null {
+    const patterns = [
+      /ticker:\s*["']?([^"',\s]+)["']?/i,
+      /symbol:\s*["']?([^"',\s]+)["']?/i,
+      /\$([A-Z0-9]+)\b/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match?.[1]) {
+        return match[1].trim().toUpperCase();
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Generate a symbol from a name
+   */
+  private generateSymbolFromName(name: string): string {
+    // Take first letters of words, or first 3-4 letters if single word
+    const words = name.split(/\s+/);
+    if (words.length > 1) {
+      return words.map(w => w[0]).join('').toUpperCase().slice(0, 10);
+    }
+    return name.toUpperCase().slice(0, 4);
   }
 } 
