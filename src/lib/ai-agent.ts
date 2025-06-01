@@ -279,44 +279,111 @@ export class ZoinerAgentService {
     imageAnalysis: ImageAnalysis | null, 
     userContext: UserContext
   ): Promise<AgentDecision> {
-    const contextText = this.buildContextText(cast, imageAnalysis, userContext);
-    const response = await this.callClaude([{
-      role: 'user',
-      content: [{ type: 'text', text: contextText }]
-    }], ZOINER_PERSONALITY_PROMPT);
-
+    const text = cast.text.toLowerCase();
+    const hasImage = imageAnalysis !== null;
+    
+    console.log('🤖 Making decision for regular token request...');
+    console.log(`🤖 Has image: ${hasImage}`);
+    console.log(`🤖 Cast text: "${cast.text}"`);
+    
+    // EXPLICIT CHECK: If has image and mentions coin/token/create, ALWAYS create token
+    if (hasImage) {
+      const tokenKeywords = ['coin', 'token', 'create', 'mint', 'make'];
+      const hasTokenKeyword = tokenKeywords.some(keyword => text.includes(keyword));
+      
+      if (hasTokenKeyword) {
+        console.log('🎯 DIRECT TOKEN CREATION: Has image + token keyword');
+        
+        // Extract custom name if provided
+        let tokenName = imageAnalysis?.suggested_names[0] || 'Creative Vision';
+        let tokenSymbol = imageAnalysis?.suggested_symbols[0] || 'CREATE';
+        
+        // Try to extract custom name after patterns like "coin this content:", "create coin:", etc.
+        const patterns = [
+          /coin this content:\s*([^,\n\r]+)/i,
+          /create coin:\s*([^,\n\r]+)/i,
+          /create a coin:\s*([^,\n\r]+)/i,
+          /make a coin:\s*([^,\n\r]+)/i,
+          /coin this:\s*([^,\n\r]+)/i,
+          /tokenize this:\s*([^,\n\r]+)/i,
+          /mint this:\s*([^,\n\r]+)/i
+        ];
+        
+        for (const pattern of patterns) {
+          const match = cast.text.match(pattern);
+          if (match && match[1] && match[1].trim()) {
+            const customName = match[1].trim();
+            tokenName = customName;
+            // Generate symbol from name
+            tokenSymbol = customName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 6).toUpperCase() || 'TOKEN';
+            console.log(`🏷️ Extracted custom name: "${tokenName}" → symbol: "${tokenSymbol}"`);
+            break;
+          }
+        }
+        
+        const decision = {
+          action: 'create_token' as const,
+          message: 'creating your token now! 🎨→🪙',
+          suggested_name: tokenName,
+          suggested_symbol: tokenSymbol,
+          metadata_description: imageAnalysis?.visual_description || `${tokenName} - Created with @zoiner on Farcaster`
+        };
+        
+        console.log('🎯 DECISION: Will create token');
+        console.log(`🎯   Name: ${decision.suggested_name}`);
+        console.log(`🎯   Symbol: ${decision.suggested_symbol}`);
+        
+        return decision;
+      }
+    }
+    
+    // If no clear intent, ask Claude for decision
+    console.log('🤖 Asking Claude for decision...');
     try {
-      return JSON.parse(response) as AgentDecision;
-    } catch {
-      // Fallback decision for regular image token creation
-      const text = cast.text.toLowerCase();
-      const hasImage = imageAnalysis !== null;
-
-      if (hasImage && (text.includes('coin') || text.includes('token'))) {
+      const contextText = this.buildContextText(cast, imageAnalysis, userContext);
+      const response = await this.callClaude([{
+        role: 'user',
+        content: [{ type: 'text', text: contextText }]
+      }], ZOINER_PERSONALITY_PROMPT);
+      
+      const claudeDecision = JSON.parse(response) as AgentDecision;
+      console.log(`🤖 Claude decision: ${claudeDecision.action}`);
+      return claudeDecision;
+    } catch (error) {
+      console.error('❌ Claude decision failed:', error);
+      
+      // Fallback: if has image, create token anyway
+      if (hasImage) {
+        console.log('🔄 Fallback: Creating token despite Claude error');
         return {
-          action: 'create_token',
+          action: 'create_token' as const,
           message: 'creating your token now! 🎨→🪙',
           suggested_name: imageAnalysis?.suggested_names[0] || 'Creative Vision',
           suggested_symbol: imageAnalysis?.suggested_symbols[0] || 'CREATE',
           metadata_description: imageAnalysis?.visual_description || 'A creative work'
         };
       }
-
+      
       return {
-        action: hasImage ? 'encourage' : 'help',
-        message: hasImage 
-          ? 'beautiful work! 🎨 want to turn this into a token?' 
-          : 'hi! share an image to create a token 🎨→🪙'
+        action: 'help' as const,
+        message: 'hi! share an image to create a token 🎨→🪙'
       };
     }
   }
-
+  
+  // Also add logging to executeTokenCreation to see if it's being called:
+  
   private async executeTokenCreation(
     decision: AgentDecision,
     cast: FarcasterCast,
     imageAnalysis: ImageAnalysis | null
   ): Promise<void> {
+    console.log('💰 === EXECUTING TOKEN CREATION ===');
+    console.log(`💰 Token name: ${decision.suggested_name}`);
+    console.log(`💰 Token symbol: ${decision.suggested_symbol}`);
+    
     if (process.env.DRY_RUN === 'true') {
+      console.log('🏜️ DRY RUN: Simulating token creation');
       await this.neynarService.replyToCast(
         cast.author.fid,
         cast.hash,
@@ -324,12 +391,18 @@ export class ZoinerAgentService {
       );
       return;
     }
-
+  
     try {
+      console.log('🔍 Getting creator address...');
       const creatorAddress = await this.neynarService.getUserEthereumAddress(cast.author.fid);
+      console.log(`🔍 Creator address: ${creatorAddress || 'NOT FOUND'}`);
+      
+      console.log('🖼️ Extracting image...');
       const imageUrl = await extractImageFromCast(cast);
+      console.log(`🖼️ Image URL: ${imageUrl || 'NOT FOUND'}`);
       
       if (!creatorAddress || !imageUrl) {
+        console.log('❌ Missing requirements for token creation');
         await this.neynarService.replyToCast(
           cast.author.fid,
           cast.hash,
@@ -339,13 +412,16 @@ export class ZoinerAgentService {
         );
         return;
       }
-
+  
+      console.log('📋 Building metadata URI...');
       const metadataUri = await this.zoraService.buildMetadataUri(
         decision.suggested_name!,
         decision.suggested_symbol!,
         imageUrl
       );
-
+      console.log(`📋 Metadata URI: ${metadataUri}`);
+  
+      console.log('🚀 Creating coin on Zora...');
       const result = await this.zoraService.createCoin({
         name: decision.suggested_name!,
         symbol: decision.suggested_symbol!,
@@ -354,15 +430,18 @@ export class ZoinerAgentService {
         platformReferrer: ZOINER_PLATFORM_ADDRESS as `0x${string}`,
         initialPurchaseWei: 0n
       });
-
+      console.log(`🚀 Coin created! Address: ${result.address}`);
+  
       const zoraUrl = this.zoraService.generateZoraUrl(result.address, ZOINER_PLATFORM_ADDRESS);
+      console.log(`🔗 Zora URL: ${zoraUrl}`);
       
       await this.neynarService.replyToCast(
         cast.author.fid,
         cast.hash,
         `${decision.message}\n\nyour creation is zoined! 🎨→🪙\n\n${zoraUrl}`
       );
-
+      console.log('✅ Reply sent with Zora URL');
+  
       // Store token creation
       await this.supabase.from('ai_token_creations').insert({
         fid: cast.author.fid,
@@ -376,7 +455,8 @@ export class ZoinerAgentService {
         zora_url: zoraUrl,
         transaction_hash: result.hash
       });
-
+      console.log('💾 Token creation stored in database');
+  
     } catch (error) {
       console.error('❌ Token creation failed:', error);
       await this.neynarService.replyToCast(
@@ -385,6 +465,8 @@ export class ZoinerAgentService {
         "sorry, hit a creative block! 🎨 try again ✨"
       );
     }
+    
+    console.log('💰 === TOKEN CREATION EXECUTION COMPLETE ===');
   }
 
   private async executeCastTokenCreation(
