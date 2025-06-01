@@ -283,90 +283,110 @@ export class ZoinerAgentService {
     const hasImage = imageAnalysis !== null;
     
     console.log('🤖 Making decision for regular token request...');
-    console.log(`🤖 Has image: ${hasImage}`);
-    console.log(`🤖 Cast text: "${cast.text}"`);
     
-    // EXPLICIT CHECK: If has image and mentions coin/token/create, ALWAYS create token
-    if (hasImage) {
-      const tokenKeywords = ['coin', 'token', 'create', 'mint', 'make'];
-      const hasTokenKeyword = tokenKeywords.some(keyword => text.includes(keyword));
+    // Check if this is clearly a token creation request
+    const tokenKeywords = ['coin', 'token', 'create', 'mint', 'make'];
+    const hasTokenKeyword = tokenKeywords.some(keyword => text.includes(keyword));
+    
+    if (hasImage && hasTokenKeyword) {
+      console.log('🎯 Token creation request detected - asking Claude for creative response');
       
-      if (hasTokenKeyword) {
-        console.log('🎯 DIRECT TOKEN CREATION: Has image + token keyword');
+      // Extract custom name if provided
+      let tokenName = imageAnalysis?.suggested_names[0] || 'Creative Vision';
+      let tokenSymbol = imageAnalysis?.suggested_symbols[0] || 'CREATE';
+      
+      // Try to extract custom name from patterns
+      const patterns = [
+        /coin this content:\s*([^,\n\r]+)/i,
+        /create coin:\s*([^,\n\r]+)/i,
+        /create a coin:\s*([^,\n\r]+)/i,
+        /make a coin:\s*([^,\n\r]+)/i,
+        /coin this:\s*([^,\n\r]+)/i,
+        /tokenize this:\s*([^,\n\r]+)/i,
+        /mint this:\s*([^,\n\r]+)/i
+      ];
+      
+      for (const pattern of patterns) {
+        const match = cast.text.match(pattern);
+        if (match && match[1] && match[1].trim()) {
+          const customName = match[1].trim();
+          tokenName = customName;
+          tokenSymbol = customName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 6).toUpperCase() || 'TOKEN';
+          break;
+        }
+      }
+      
+      // Ask Claude to craft a creative response about the artwork using existing personality
+      try {
+        const contextText = `User message: "${cast.text}"
+  Token name will be: "${tokenName}"
+  Token symbol will be: "${tokenSymbol}"
+  
+  Image analysis: ${imageAnalysis?.artistic_style}, ${imageAnalysis?.mood}, colors: ${imageAnalysis?.color_palette.join(', ')}
+  Visual description: ${imageAnalysis?.visual_description}
+  Suggested names: ${imageAnalysis?.suggested_names.join(', ')}
+  
+  This is clearly a token creation request. Respond with your creative personality about their artwork and confirm token creation.`;
+  
+        const response = await this.callClaude([{
+          role: 'user',
+          content: [{ type: 'text', text: contextText }]
+        }], ZOINER_PERSONALITY_PROMPT);
         
-        // Extract custom name if provided
-        let tokenName = imageAnalysis?.suggested_names[0] || 'Creative Vision';
-        let tokenSymbol = imageAnalysis?.suggested_symbols[0] || 'CREATE';
-        
-        // Try to extract custom name after patterns like "coin this content:", "create coin:", etc.
-        const patterns = [
-          /coin this content:\s*([^,\n\r]+)/i,
-          /create coin:\s*([^,\n\r]+)/i,
-          /create a coin:\s*([^,\n\r]+)/i,
-          /make a coin:\s*([^,\n\r]+)/i,
-          /coin this:\s*([^,\n\r]+)/i,
-          /tokenize this:\s*([^,\n\r]+)/i,
-          /mint this:\s*([^,\n\r]+)/i
-        ];
-        
-        for (const pattern of patterns) {
-          const match = cast.text.match(pattern);
-          if (match && match[1] && match[1].trim()) {
-            const customName = match[1].trim();
-            tokenName = customName;
-            // Generate symbol from name
-            tokenSymbol = customName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 6).toUpperCase() || 'TOKEN';
-            console.log(`🏷️ Extracted custom name: "${tokenName}" → symbol: "${tokenSymbol}"`);
-            break;
+        try {
+          const decision = JSON.parse(response) as AgentDecision;
+          
+          // Ensure it's a token creation action (override if Claude didn't set it correctly)
+          if (decision.action !== 'create_token') {
+            decision.action = 'create_token';
+            decision.suggested_name = tokenName;
+            decision.suggested_symbol = tokenSymbol;
           }
+          
+          console.log(`🎨 Claude crafted creative response: "${decision.message}"`);
+          return decision;
+        } catch (parseError) {
+          console.error('❌ Error parsing Claude response:', parseError);
+          console.warn('Claude returned non-JSON, using raw response as message');
+          // Use Claude's raw response as the message, but ensure token creation
+          return {
+            action: 'create_token',
+            message: response.length > 280 ? response.substring(0, 277) + '...' : response,
+            suggested_name: tokenName,
+            suggested_symbol: tokenSymbol,
+            metadata_description: imageAnalysis?.visual_description || `${tokenName} - A creative work`
+          };
         }
         
-        const decision = {
-          action: 'create_token' as const,
-          message: 'creating your token now! 🎨→🪙',
+      } catch (error) {
+        console.error('❌ Claude creative response failed:', error);
+        
+        // Fallback to generic but still create token
+        return {
+          action: 'create_token',
+          message: `beautiful ${imageAnalysis?.artistic_style || 'artwork'}! creating your "${tokenName}" token now 🎨→🪙`,
           suggested_name: tokenName,
           suggested_symbol: tokenSymbol,
-          metadata_description: imageAnalysis?.visual_description || `${tokenName} - Created with @zoiner on Farcaster`
+          metadata_description: imageAnalysis?.visual_description || `${tokenName} - A creative work`
         };
-        
-        console.log('🎯 DECISION: Will create token');
-        console.log(`🎯   Name: ${decision.suggested_name}`);
-        console.log(`🎯   Symbol: ${decision.suggested_symbol}`);
-        
-        return decision;
       }
     }
     
-    // If no clear intent, ask Claude for decision
-    console.log('🤖 Asking Claude for decision...');
+    // For unclear intent, use the original Claude decision flow
+    const contextText = this.buildContextText(cast, imageAnalysis, userContext);
     try {
-      const contextText = this.buildContextText(cast, imageAnalysis, userContext);
       const response = await this.callClaude([{
         role: 'user',
         content: [{ type: 'text', text: contextText }]
       }], ZOINER_PERSONALITY_PROMPT);
       
-      const claudeDecision = JSON.parse(response) as AgentDecision;
-      console.log(`🤖 Claude decision: ${claudeDecision.action}`);
-      return claudeDecision;
-    } catch (error) {
-      console.error('❌ Claude decision failed:', error);
-      
-      // Fallback: if has image, create token anyway
-      if (hasImage) {
-        console.log('🔄 Fallback: Creating token despite Claude error');
-        return {
-          action: 'create_token' as const,
-          message: 'creating your token now! 🎨→🪙',
-          suggested_name: imageAnalysis?.suggested_names[0] || 'Creative Vision',
-          suggested_symbol: imageAnalysis?.suggested_symbols[0] || 'CREATE',
-          metadata_description: imageAnalysis?.visual_description || 'A creative work'
-        };
-      }
-      
+      return JSON.parse(response) as AgentDecision;
+    } catch {
       return {
-        action: 'help' as const,
-        message: 'hi! share an image to create a token 🎨→🪙'
+        action: hasImage ? 'encourage' : 'help',
+        message: hasImage 
+          ? 'beautiful work! 🎨 want to turn this into a token?' 
+          : 'hi! share an image to create a token 🎨→🪙'
       };
     }
   }
