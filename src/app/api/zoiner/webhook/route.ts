@@ -9,6 +9,10 @@ import { createZoraService } from '~/lib/zora';
 import { AIBotService } from '~/lib/ai-bot-service';
 import { ZoinerWebhookEvent } from '~/lib/types/zoiner';
 
+// Global cooldown map to prevent rapid-fire processing
+const processingCooldown = new Map<string, number>();
+const COOLDOWN_MS = 30000; // 30 seconds between processing same user
+
 // Webhook verification for GET requests
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -37,11 +41,34 @@ export async function POST(request: NextRequest) {
     // Only process cast.created events
     if (event.type !== 'cast.created') {
       console.log(`⏭️ Ignoring event type: ${event.type}`);
-      return NextResponse.json({ status: 'ok' });
+      return NextResponse.json({ status: 'ok', reason: 'ignored_event_type' });
     }
     
     const castHash = event.data.hash;
     console.log(`📝 Processing cast.created event for cast ${castHash}`);
+    
+    // Quick check for cooldown before expensive initialization
+    const now = Date.now();
+    const lastProcessed = processingCooldown.get(castHash);
+    if (lastProcessed && (now - lastProcessed) < COOLDOWN_MS) {
+      console.log(`⏱️ Cast ${castHash} is in cooldown period, skipping`);
+      return NextResponse.json({ 
+        status: 'ok', 
+        reason: 'cooldown_active',
+        cast_hash: castHash 
+      });
+    }
+    
+    // Set cooldown immediately
+    processingCooldown.set(castHash, now);
+    
+    // Clean up old cooldown entries (older than 1 hour)
+    const hourAgo = now - (60 * 60 * 1000);
+    for (const [hash, timestamp] of processingCooldown.entries()) {
+      if (timestamp < hourAgo) {
+        processingCooldown.delete(hash);
+      }
+    }
     
     // Initialize AI-powered bot service
     const aiBotService = await initializeAIBotService();
@@ -53,19 +80,21 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
     
-    // CRITICAL FIX: Await the async processing instead of fire-and-forget
-    // This ensures the processing completes before the serverless function terminates
+    // Process the cast with full error handling
     try {
       await aiBotService.processCast(castHash);
       console.log('✅ AI agent processing completed successfully');
       
       return NextResponse.json({ 
-        status: 'ok',
+        status: 'completed',
         message: 'AI agent processing completed',
         cast_hash: castHash
       });
     } catch (processingError) {
       console.error(`❌ Error processing cast ${castHash}:`, processingError);
+      
+      // Remove from cooldown on error so it can be retried
+      processingCooldown.delete(castHash);
       
       // Still return 200 OK to webhook, but log the error
       return NextResponse.json({ 

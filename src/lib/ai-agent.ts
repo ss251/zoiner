@@ -80,19 +80,23 @@ export class ZoinerAgentService {
 
   async processInteraction(cast: FarcasterCast): Promise<void> {
     console.group(`🎨 AI Agent processing interaction from FID ${cast.author.fid}`);
+    console.log(`📝 Processing cast text: "${cast.text}"`);
     
     try {
       // Check if this is a "coin this cast" request
       const isCastTokenRequest = isRequestToCoinCast(cast.text);
+      console.log(`🔍 Is "coin this cast" request: ${isCastTokenRequest}`);
       
       if (isCastTokenRequest) {
+        console.log('📸 Taking "coin this cast" path - creating token from cast preview');
         // Handle "coin this cast" requests
         await this.processCastTokenRequest(cast);
       } else {
+        console.log('🎨 Taking regular image token creation path - looking for attached images');
         // Handle regular image token creation (existing flow)
         await this.processRegularTokenRequest(cast);
       }
-
+  
     } catch (error) {
       console.error('❌ Error in AI agent processing:', error);
       await this.neynarService.replyToCast(

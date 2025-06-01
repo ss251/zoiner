@@ -36,7 +36,7 @@ export class AIBotService {
       return;
     }
 
-    // Mark this cast as processed
+    // Mark this cast as processed immediately to prevent race conditions
     this.processedCasts.add(castHash);
 
     console.group(`🎨 AI Bot processing cast: ${castHash}`);
@@ -50,9 +50,10 @@ export class AIBotService {
         return;
       }
 
-      // Skip processing if this cast is from our own bot
-      if (cast.author.fid === parseInt(process.env.BOT_FID || '0')) {
-        console.log(`⏭️ Skipping our own bot's cast to prevent loops`);
+      // CRITICAL: Skip processing if this cast is from our own bot (prevent infinite loops)
+      const botFid = parseInt(process.env.BOT_FID || '0');
+      if (cast.author.fid === botFid) {
+        console.log(`⏭️ Skipping our own bot's cast (FID: ${cast.author.fid}) to prevent infinite loops`);
         console.groupEnd();
         return;
       }
@@ -60,6 +61,14 @@ export class AIBotService {
       // Check if this is a cast that mentions our bot
       if (!this.neynarService.castMentionsBot(cast)) {
         console.log(`⏭️ Cast ${castHash} does not mention our bot, ignoring`);
+        console.groupEnd();
+        return;
+      }
+
+      // Additional safety check: Skip if cast is very recent to our last reply
+      // This prevents rapid-fire loops if there are webhook delays
+      if (await this.isRecentBotInteraction(cast)) {
+        console.log(`⏭️ Skipping cast too close to recent bot activity to prevent loops`);
         console.groupEnd();
         return;
       }
@@ -78,7 +87,7 @@ export class AIBotService {
       // Send a friendly error message as fallback
       try {
         const cast = await this.neynarService.getCastByHash(castHash);
-        if (cast && this.neynarService.castMentionsBot(cast)) {
+        if (cast && this.neynarService.castMentionsBot(cast) && cast.author.fid !== parseInt(process.env.BOT_FID || '0')) {
           await this.neynarService.replyToCast(
             cast.author.fid,
             cast.hash,
@@ -90,6 +99,38 @@ export class AIBotService {
       }
     }
     console.groupEnd();
+  }
+
+  /**
+   * Check if this cast is too close to recent bot activity to prevent loops
+   * @param cast The cast to check
+   * @returns True if we should skip this cast to prevent loops
+   */
+  private async isRecentBotInteraction(cast: FarcasterCast): Promise<boolean> {
+    try {
+      // If this is a reply to a cast, check if the parent was from our bot
+      if (cast.parent_hash) {
+        const parentCast = await this.neynarService.getCastByHash(cast.parent_hash);
+        const botFid = parseInt(process.env.BOT_FID || '0');
+        
+        if (parentCast && parentCast.author.fid === botFid) {
+          // Check if this cast was created very soon after the parent (within 10 seconds)
+          const parentTime = new Date(parentCast.timestamp).getTime();
+          const castTime = new Date(cast.timestamp).getTime();
+          const timeDiff = castTime - parentTime;
+          
+          if (timeDiff < 10000) { // Less than 10 seconds
+            console.log(`⚠️ Cast created ${timeDiff}ms after bot reply - potential loop detected`);
+            return true;
+          }
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      console.warn('Error checking recent bot interaction:', error);
+      return false; // If we can't check, proceed with processing
+    }
   }
 
   /**
@@ -120,4 +161,4 @@ export class AIBotService {
     this.processedCasts.clear();
     console.log('🧹 Cleared processed casts cache');
   }
-} 
+}
