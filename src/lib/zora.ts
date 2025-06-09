@@ -1,7 +1,8 @@
-import { createCoin } from '@zoralabs/coins-sdk';
+import { createCoin, DeployCurrency } from '@zoralabs/coins-sdk';
 import { WalletClient, PublicClient } from 'viem';
 import { CoinCreationParams, CoinCreationResult } from './types/zoiner';
 import { generateZoraMetadata, uploadMetadataToIPFS } from './ipfs-utils';
+import { base } from 'viem/chains';
 import axios from 'axios';
 
 // Add sleep function for retries
@@ -168,11 +169,25 @@ export class ZoraService {
         try {
           console.log(`Attempt ${attempt}/${maxRetries} to create coin...`);
           
-          // Call Zora SDK to create the coin
+          // Prepare parameters for new SDK format
+          const coinParams = {
+            name: params.name,
+            symbol: params.symbol,
+            uri: params.uri,
+            payoutRecipient: params.payoutRecipient,
+            platformReferrer: params.platformReferrer,
+            chainId: base.id,
+            currency: DeployCurrency.ZORA, // Use ZORA as currency on Base
+          };
+          
+          // Call Zora SDK to create the coin with new API
           const result = await createCoin(
-            params,
+            coinParams,
             this.walletClient,
-            this.publicClient
+            this.publicClient,
+            {
+              gasMultiplier: 120, // Add 20% gas buffer
+            }
           );
           
           console.log('Zora coin creation successful:', {

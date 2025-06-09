@@ -67,7 +67,9 @@ export interface CoinCreationParams {
   uri: string;
   payoutRecipient: Address;
   platformReferrer?: Address;
-  initialPurchaseWei?: bigint;
+  chainId?: number;
+  currency?: number; // DeployCurrency enum value
+  owners?: Address[];
 }
 
 export interface CoinCreationResult {
@@ -92,4 +94,4 @@ export interface CoinCreationRequest {
   symbol: string;
   imageUrl: string;
   creatorAddress: `0x${string}`;
-} 
+}
