@@ -190,6 +190,50 @@ export class NeynarBotService {
   }
   
   /**
+   * Get Ethereum address for a Farcaster user by username
+   * @param username The Farcaster username to look up (without @)
+   * @returns Ethereum address or null if not found
+   */
+  async getUserEthereumAddressByUsername(username: string): Promise<string | null> {
+    try {
+      console.log(`🔍 Looking up user by username: ${username}`);
+      
+      // Use the Neynar API to search for users by username
+      const response = await this.client.searchUser({ q: username, limit: 10 });
+      
+      if (!response?.result?.users?.length) {
+        console.log(`❌ No users found for username: ${username}`);
+        return null;
+      }
+      
+      // Find exact username match (case insensitive)
+      const exactMatch = response.result.users.find(
+        user => user.username.toLowerCase() === username.toLowerCase()
+      );
+      
+      if (!exactMatch) {
+        console.log(`❌ No exact match found for username: ${username}`);
+        return null;
+      }
+      
+      console.log(`✅ Found user: ${exactMatch.username} (FID: ${exactMatch.fid})`);
+      
+      // Get the primary verified address
+      const ethAddress = exactMatch.verifications?.[0];
+      if (ethAddress) {
+        console.log(`✅ Found verified ETH address for @${username}: ${ethAddress}`);
+        return ethAddress;
+      } else {
+        console.log(`❌ No verified ETH address for @${username}`);
+        return null;
+      }
+    } catch (error) {
+      console.error(`Error looking up user ${username}:`, error);
+      return null;
+    }
+  }
+  
+  /**
    * Format a cast from Neynar API format to our internal format
    * @param apiCast The cast from Neynar API
    * @returns Formatted cast for internal use

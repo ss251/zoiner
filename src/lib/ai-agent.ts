@@ -357,6 +357,11 @@ export class ZoinerAgentService {
       const creatorAddress = await this.neynarService.getUserEthereumAddress(cast.author.fid);
       console.log(`🔍 Creator address: ${creatorAddress || 'NOT FOUND'}`);
       
+      // Check for mentioned users who should receive creator rewards
+      console.log('👥 Checking for mentioned users for reward routing...');
+      const rewardRecipient = await this.determineRewardRecipient(cast, creatorAddress);
+      console.log(`💰 Reward recipient: ${rewardRecipient.address} (${rewardRecipient.username})`);
+      
       console.log('🖼️ Extracting image...');
       const imageUrl = await extractImageFromCast(cast);
       console.log(`🖼️ Image URL: ${imageUrl || 'NOT FOUND'}`);
@@ -386,19 +391,29 @@ export class ZoinerAgentService {
         name: decision.suggested_name!,
         symbol: decision.suggested_symbol!,
         uri: metadataUri,
-        payoutRecipient: creatorAddress as `0x${string}`,
+        payoutRecipient: rewardRecipient.address as `0x${string}`,
         platformReferrer: ZOINER_PLATFORM_ADDRESS as `0x${string}`,
-        initialPurchaseWei: 0n
       });
       console.log(`🚀 Coin created! Address: ${result.address}`);
   
       const zoraUrl = this.zoraService.generateZoraUrl(result.address, ZOINER_PLATFORM_ADDRESS);
       console.log(`🔗 Zora URL: ${zoraUrl}`);
       
+      // Craft message based on who's getting the rewards
+      let successMessage = `${decision.message}\n\nyour creation is zoined! 🎨→🪙\n\n${zoraUrl}`;
+      
+      if (rewardRecipient.wasRedirected) {
+        successMessage += `\n\n✨ creator rewards going to @${rewardRecipient.username}`;
+      } else if (rewardRecipient.redirectReason === 'bot_self_mention') {
+        successMessage += `\n\n💡 rewards stay with you (can't send to bot)`;
+      } else if (rewardRecipient.redirectReason === 'no_verified_address') {
+        successMessage += `\n\n💡 mentioned user has no verified address, rewards stay with you`;
+      }
+      
       await this.neynarService.replyToCast(
         cast.author.fid,
         cast.hash,
-        `${decision.message}\n\nyour creation is zoined! 🎨→🪙\n\n${zoraUrl}`
+        successMessage
       );
       console.log('✅ Reply sent with Zora URL');
   
@@ -413,7 +428,8 @@ export class ZoinerAgentService {
         ai_generated_description: decision.metadata_description!,
         user_prompt: cast.text,
         zora_url: zoraUrl,
-        transaction_hash: result.hash
+        transaction_hash: result.hash,
+        reward_recipient_username: rewardRecipient.wasRedirected ? rewardRecipient.username : null
       });
       console.log('💾 Token creation stored in database');
   
@@ -422,7 +438,7 @@ export class ZoinerAgentService {
       await this.neynarService.replyToCast(
         cast.author.fid,
         cast.hash,
-        "sorry, hit a creative block! �� try again ✨"
+        "sorry, hit a creative block! 🎨 try again ✨"
       );
     }
     
@@ -475,7 +491,6 @@ export class ZoinerAgentService {
         uri: metadataUri,
         payoutRecipient: creatorAddress as `0x${string}`,
         platformReferrer: ZOINER_PLATFORM_ADDRESS as `0x${string}`,
-        initialPurchaseWei: 0n
       });
 
       const zoraUrl = this.zoraService.generateZoraUrl(result.address, ZOINER_PLATFORM_ADDRESS);
@@ -712,31 +727,35 @@ examples:
    */
   private extractExplicitName(text: string): string | null {
     const patterns = [
-      // Original patterns for coin creation
-      /coin this content:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
-      /create coin:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
-      /create a coin:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
-      /make a coin:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
-      /coin this:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
-      /tokenize this:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
-      /mint this:\s*([^,\n\r]+?)(?:\s*,|\s+ticker:|\s*$)/i,
+      // Patterns that stop at line breaks or reward instructions
+      /create (?:a )?coin (?:called|named) ["']?([^"',\n\r]+?)["']?(?:\s*[,\n\r]|\s+ticker:|\s+give\s+creator|\s*$)/i,
+      /coin (?:called|named) ["']?([^"',\n\r]+?)["']?(?:\s*[,\n\r]|\s+ticker:|\s+give\s+creator|\s*$)/i,
+      /token (?:called|named) ["']?([^"',\n\r]+?)["']?(?:\s*[,\n\r]|\s+give\s+creator|\s*$)/i,
       
-      // Patterns with "called" or "named"
-      /create (?:a )?coin (?:called|named) ["']?([^"',]+?)["']?(?:\s*,|\s+ticker:|\s*$)/i,
-      /coin (?:called|named) ["']?([^"',]+?)["']?(?:\s*,|\s+ticker:|\s*$)/i,
-      /token (?:called|named) ["']?([^"',]+?)["']?/i,
+      // Direct name: pattern (stop at line breaks or reward instructions)
+      /name:\s*["']?([^"',\n\r]+?)["']?(?:\s*[,\n\r]|\s+ticker:|\s+give\s+creator|\s*$)/i,
       
-      // Direct name: pattern
-      /name:\s*["']?([^"',]+?)["']?(?:\s*,|\s+ticker:|\s*$)/i,
+      // Original patterns but more restrictive
+      /coin this content:\s*([^,\n\r]+?)(?:\s*[,\n\r]|\s+ticker:|\s+give\s+creator|\s*$)/i,
+      /create coin:\s*([^,\n\r]+?)(?:\s*[,\n\r]|\s+ticker:|\s+give\s+creator|\s*$)/i,
+      /create a coin:\s*([^,\n\r]+?)(?:\s*[,\n\r]|\s+ticker:|\s+give\s+creator|\s*$)/i,
+      /make a coin:\s*([^,\n\r]+?)(?:\s*[,\n\r]|\s+ticker:|\s+give\s+creator|\s*$)/i,
+      /coin this:\s*([^,\n\r]+?)(?:\s*[,\n\r]|\s+ticker:|\s+give\s+creator|\s*$)/i,
+      /tokenize this:\s*([^,\n\r]+?)(?:\s*[,\n\r]|\s+ticker:|\s+give\s+creator|\s*$)/i,
+      /mint this:\s*([^,\n\r]+?)(?:\s*[,\n\r]|\s+ticker:|\s+give\s+creator|\s*$)/i,
       
       // Quoted token pattern
-      /"([^"]+)" token/i
+      /"([^"\n\r]+)" token/i
     ];
     
     for (const pattern of patterns) {
       const match = text.match(pattern);
       if (match?.[1]) {
-        return match[1].trim();
+        const name = match[1].trim();
+        // Additional validation: ensure it's not too long and doesn't contain newlines
+        if (name.length <= 50 && !name.includes('\n') && !name.includes('\r')) {
+          return name;
+        }
       }
     }
     return null;
@@ -771,5 +790,93 @@ examples:
       return words.map(w => w[0]).join('').toUpperCase().slice(0, 10);
     }
     return name.toUpperCase().slice(0, 4);
+  }
+
+  /**
+   * Determine who should receive creator rewards based on mentions in the cast
+   */
+  private async determineRewardRecipient(cast: FarcasterCast, defaultAddress: string | null): Promise<{
+    address: string;
+    username: string;
+    wasRedirected: boolean;
+    redirectReason?: string;
+  }> {
+    console.log('👥 Analyzing cast for reward recipient mentions...');
+    console.log(`📝 Cast text: "${cast.text}"`);
+    
+    // Extract mentioned usernames from the cast
+    const mentionedUsers = this.extractMentionedUsers(cast.text);
+    console.log(`👥 Found mentioned users: ${mentionedUsers.join(', ')}`);
+    
+    // Check if user mentioned the bot itself
+    const mentionedBot = cast.text.toLowerCase().includes('@zoiner');
+    
+    // If no mentions or no default address, use the caster
+    if (mentionedUsers.length === 0 || !defaultAddress) {
+      console.log('📍 No valid mentions found or no default address, using original caster');
+      return {
+        address: defaultAddress || cast.author.verifications?.ethereum || '',
+        username: cast.author.username,
+        wasRedirected: false,
+        redirectReason: mentionedBot ? 'bot_self_mention' : undefined
+      };
+    }
+    
+    // Try to get ETH address for the first mentioned user
+    for (const username of mentionedUsers) {
+      console.log(`🔍 Looking up ETH address for @${username}...`);
+      try {
+        const mentionedUserAddress = await this.neynarService.getUserEthereumAddressByUsername(username);
+        if (mentionedUserAddress) {
+          console.log(`✅ Found ETH address for @${username}: ${mentionedUserAddress}`);
+          return {
+            address: mentionedUserAddress,
+            username,
+            wasRedirected: true
+          };
+        } else {
+          console.log(`❌ No verified ETH address found for @${username}`);
+        }
+      } catch (error) {
+        console.log(`❌ Error looking up @${username}: ${error}`);
+      }
+    }
+    
+    // Fallback to original caster if no mentioned users have verified addresses
+    console.log('📍 No mentioned users with verified addresses found, using original caster');
+    return {
+      address: defaultAddress,
+      username: cast.author.username,
+      wasRedirected: false,
+      redirectReason: mentionedBot ? 'bot_self_mention' : 'no_verified_address'
+    };
+  }
+  
+  /**
+   * Extract mentioned usernames from cast text
+   */
+  private extractMentionedUsers(text: string): string[] {
+    console.log(`🔍 Extracting mentions from: "${text}"`);
+    
+    // Look for @username patterns (excluding the bot itself)
+    const mentionPattern = /@([a-zA-Z0-9_\-]+)/g;
+    const mentions: string[] = [];
+    let match;
+    
+    while ((match = mentionPattern.exec(text)) !== null) {
+      const username = match[1].toLowerCase();
+      
+      // Skip if it's the bot itself
+      if (username === 'zoiner') {
+        console.log(`⏭️ Skipping bot mention: @${username}`);
+        continue;
+      }
+      
+      mentions.push(username);
+      console.log(`✅ Found mention: @${username}`);
+    }
+    
+    console.log(`📋 Total mentions found: ${mentions.length}`);
+    return mentions;
   }
 } 
